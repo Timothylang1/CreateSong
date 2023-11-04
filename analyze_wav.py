@@ -1,140 +1,143 @@
 import numpy as np
-import tqdm
-import matplotlib.pyplot as plt
-from scipy.fftpack import fft
 from scipy.io import wavfile # get the api
-import plotly.graph_objects as go
-import math
-import sys
+from mingus.core import chords
+
+from decimal import Decimal
 
 
 # Configuration
-FPS = 30
-FFT_WINDOW_SECONDS = 0.5 # how many seconds of audio make up an FFT window
+FPS = 8 # How many samples we take per second
 
-# Note range to display
-FREQ_MIN = 10
-FREQ_MAX = 1000
-
-# Notes to display
-TOP_NOTES = 3
+MAX_NOTES = 6
 
 # Names of the notes
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-# Output size. Generally use SCALE for higher res, unless you need a non-standard aspect ratio.
-RESOLUTION = (1920, 1080)
-SCALE = 2 # 0.5=QHD(960x540), 1=HD(1920x1080), 2=4K(3840x2160)
-
 # Or download my sample audio
+# AUDIO_FILE = "inputsongs/C Major Scale.wav"
 AUDIO_FILE = "inputsongs/Plain White T's - Hey There Delilah.wav"
+# AUDIO_FILE = "outputsongs/test3.wav"
 
-fs, data = wavfile.read(AUDIO_FILE) # load the data
-audio = data.T[0] # this is a two channel soundtrack, get the first track
-FRAME_STEP = (fs / FPS) # audio samples per video frame
-FFT_WINDOW_SIZE = int(fs * FFT_WINDOW_SECONDS)
-AUDIO_LENGTH = len(audio)/fs
+fs, audio = wavfile.read(AUDIO_FILE) # load the data
 
+# First, check if it's stereo or mono
+try:
+  audio = audio[:, 0] # Get left channel
+except:
+  pass
 
-def plot_fft(p, xf, fs, notes, dimensions=(960,540)):
-  layout = go.Layout(
-      title="frequency spectrum",
-      autosize=False,
-      width=dimensions[0],
-      height=dimensions[1],
-      xaxis_title="Frequency (note)",
-      yaxis_title="Magnitude",
-      font={'size' : 24}
-  )
+AUDIO_LENGTH = len(audio)/fs # In terms of seconds
 
-  fig = go.Figure(layout=layout,
-                  layout_xaxis_range=[FREQ_MIN,FREQ_MAX],
-                  layout_yaxis_range=[0,1]
-                  )
-  
-  fig.add_trace(go.Scatter(
-      x = xf,
-      y = p))
-  
-  for note in notes:
-    fig.add_annotation(x=note[0]+10, y=note[2],
-            text=note[1],
-            font = {'size' : 48},
-            showarrow=False)
-  return fig
-
-def extract_sample(audio, frame_number):
-  end = frame_number * FRAME_OFFSET
-  begin = int(end - FFT_WINDOW_SIZE)
-
-  if end == 0:
-    # We have no audio yet, return all zeros (very beginning)
-    return np.zeros((np.abs(begin)),dtype=float)
-  elif begin<0:
-    # We have some audio, padd with zeros
-    return np.concatenate([np.zeros((np.abs(begin)),dtype=float),audio[0:end]])
-  else:
-    # Usually this happens, return the next sample
-    return audio[begin:end]
-
-def find_top_notes(fft,num):
-  if np.max(fft.real)<0.001:
-    return []
-
-  lst = [x for x in enumerate(fft.real)]
-  lst = sorted(lst, key=lambda x: x[1],reverse=True)
-
-  idx = 0
-  found = []
-  found_note = set()
-  while( (idx<len(lst)) and (len(found)<num) ):
-    f = xf[lst[idx][0]]
-    y = lst[idx][1]
-    n = freq_to_number(f)
-    if math.isinf(n): n = sys.float_info.max
-    n0 = int(round(n))
-    name = note_name(n0)
-
-    if name not in found_note:
-      found_note.add(name)
-      s = [f,note_name(n0),y]
-      found.append(s)
-    idx += 1
-    
-  return found
-
-
-# See https://newt.phys.unsw.edu.au/jw/notes.html
-def freq_to_number(f): return 69 + 12*np.log2(f/440.0)
-def number_to_freq(n): return 440 * 2.0**((n-69)/12.0)
-def note_name(n): return NOTE_NAMES[n % 12] + str(int(n/12 - 1))
-
-# Hanning window function
-window = 0.5 * (1 - np.cos(np.linspace(0, 2*np.pi, FFT_WINDOW_SIZE, False)))
-
-xf = np.fft.rfftfreq(FFT_WINDOW_SIZE, 1/fs)
 FRAME_COUNT = int(AUDIO_LENGTH*FPS)
 FRAME_OFFSET = int(len(audio)/FRAME_COUNT)
 
-# Pass 1, find out the maximum amplitude so we can scale.
-mx = 0
-for frame_number in range(FRAME_COUNT):
-  sample = extract_sample(audio, frame_number)
+def find_top_notes(fft):
+  lst = [x for x in enumerate(fft.real)][1:] # Remove 0 frequency
+  lst = sorted(lst, key=lambda x: x[1],reverse=True)
 
-  fft = np.fft.rfft(sample * window)
-  fft = np.abs(fft).real 
-  mx = max(np.max(fft),mx)
+  notes = []
+  strengths = []
 
-print(f"Max amplitude: {mx}")
+  for note, strength in lst:
+    note = int(round(freq_to_number(note)))
+    if (note not in notes): 
+      notes.append(note)
+      strengths.append(strength)
+      if len(notes) == MAX_NOTES + 1: 
+        break # If we have the maximum number of notes, break
+  return notes, strengths
 
-# Pass 2, produce the animation
-for frame_number in tqdm.tqdm(range(FRAME_COUNT)):
-  sample = extract_sample(audio, frame_number)
+# See https://newt.phys.unsw.edu.au/jw/notes.html
+def freq_to_number(f): return 69 + 12*np.log2(f/440.0) + 24
+def number_to_freq(n): return 440 * 2.0**((n-69)/12.0)
+def note_name(n): return NOTE_NAMES[n % 12] + str(int(n/12 - 1))
 
-  fft = np.fft.rfft(sample * window)
-  fft = np.abs(fft) / mx 
-     
-  s = find_top_notes(fft,TOP_NOTES)
+def filter_cutoff_strength(notes, strengths):
+  # We want to find the cutoff for the strength so that the maximum number of notes we would have is MAX_NOTES
+  cutoff = strengths[0][MAX_NOTES]
+  for subStrengths in strengths:
+    cutoff = max(subStrengths[MAX_NOTES], cutoff)
+  cutoff += 1
 
-  fig = plot_fft(fft.real,xf,fs,s,RESOLUTION)
-  fig.write_image(f"test/{frame_number}.png",scale=2)
+  print("Cutoff: %.2E\t" % Decimal(cutoff))
+
+  for i in range(len(notes)):
+    current_notes = notes[i]
+    current_strengths = strengths[i]
+    for j in reversed(range(MAX_NOTES + 1)):
+      if current_strengths[j] < cutoff: current_notes.pop(j)
+  
+  return notes
+
+
+def printnotes(notes, strengths):
+  for note in notes:
+    print(note_name(note) + "\t\t", end="")
+  print()
+  for strength in strengths:
+    print("%.2E\t" % Decimal(strength), end="")
+  print()
+
+# Get all notes, then get all strengths
+all_notes = []
+all_strengths = []
+
+for i in range(FRAME_COUNT):
+  fft = np.fft.rfft(audio[i * FRAME_OFFSET: (i + 1) * FRAME_OFFSET])
+  fft = np.abs(fft) 
+  notes, strengths = find_top_notes(fft)
+  all_notes.append(notes)
+  all_strengths.append(strengths)
+
+filter_cutoff_strength(all_notes, all_strengths)
+
+from midiutil.MidiFile import MIDIFile
+
+# create your MIDI object
+mf = MIDIFile(1)
+track = 0   # the only track
+channel = 0 # Only on one channel
+volume = 100
+time = 0    # time counter
+previous_notes = {}   # Tracker to see how long a note lasts
+
+
+mf.addTrackName(track, time, "Track 1")
+mf.addTempo(track, time, int(60 * FPS))
+
+# Update duration of notes
+for notes in all_notes:
+  time += 1 # Updates timer
+
+  # If no notes being played, then we hold down the last known notes
+  if len(notes) == 0:
+    for note in previous_notes:
+      if previous_notes[note] != 0: previous_notes[note] += 1
+    continue
+
+  # Increment all notes that are still playing
+  for note in notes:
+    if note in previous_notes: previous_notes[note] += 1 # For every first encounter with a new note, we have to add it into the dictionary
+    else: previous_notes[note] = 1
+  
+  # Add in notes whose duration has ended
+  for note in previous_notes:
+    if note not in notes and previous_notes[note] != 0:
+      mf.addNote(track, channel, note, time - previous_notes[note], previous_notes[note], volume)
+      previous_notes[note] = 0
+
+mf.writeFile(open("outputsongs/conversion.mid", 'wb'))
+
+
+
+# # write it to disk
+# with open("outputsongs/conversion.mid", 'wb') as outf:
+#     mf.writeFile(outf)
+
+
+
+# s = find_top_notes(fft)
+# s = ["E", "C", "A"]
+# print(s)
+# chord = chords.determine(s, shorthand=True, no_inversions=False, )
+# print(chord)
