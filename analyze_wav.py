@@ -3,17 +3,19 @@ from scipy.io import wavfile
 from decimal import Decimal
 
 # Configuration
-FPS = 1 # How many samples we take per second
+FPS = 16 # How many samples we take per second
 
-MAX_NOTES = 1
+MAX_NOTES = 7
+
+WITH_FREQ_CUTOFF = True
 
 # Names of the notes
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 # Audio file pathway
-AUDIO_FILE = "inputsongs/C Major Scale"
+# AUDIO_FILE = "C Major Scale"
 # AUDIO_FILE = "Chord progression"
-# AUDIO_FILE = "Plain White T's - Hey There Delilah"
+AUDIO_FILE = "Plain White T's - Hey There Delilah"
 
 fs, audio = wavfile.read("inputsongs/" + AUDIO_FILE + ".wav") # load the data
 
@@ -38,42 +40,39 @@ def find_top_notes(fft):
     if (note not in notes): # To ensure we don't have duplicate notes
       notes.append(note)
       strengths.append(strength)
-      if len(notes) == MAX_NOTES + 1: 
-        break # If we have the maximum number of notes, break
+      if len(notes) == MAX_NOTES + 1: break # If we have the maximum number of notes, break
   return notes, strengths
 
 def freq_to_number(f): return 69 + 12*np.log2(f/440.0)
 def number_to_freq(n): return 440 * 2.0**((n-69)/12.0)
 def note_name(n): return NOTE_NAMES[n % 12] + str(int(n/12 - 1))
 
-# def get_top_notes(notes, strengths):
-#   """
-#   This method finds the minimum cutoff frequency so that the maximum number of notes at any one time is MAX_NOTES
-#   """
-#   # We want to find the cutoff for the strength so that the maximum number of notes we would have is MAX_NOTES
-#   cutoff = strengths[0][MAX_NOTES]
-#   for subStrengths in strengths:
-#     cutoff = max(subStrengths[MAX_NOTES], cutoff)
-#   cutoff += 1
+def get_top_notes_using_frequency(notes, strengths):
+  """
+  This method finds the minimum cutoff frequency so that the maximum number of notes at any one time is MAX_NOTES
+  """
+  # We want to find the cutoff for the strength so that the maximum number of notes we would have is MAX_NOTES
+  cutoff = strengths[0][MAX_NOTES]
+  for subStrengths in strengths:
+    cutoff = max(subStrengths[MAX_NOTES], cutoff)
+  cutoff += 1
 
-#   print("Cutoff: %.2E\t" % Decimal(cutoff))
+  print("Cutoff: %.2E\t" % Decimal(cutoff))
 
-#   for i in range(len(notes)):
-#     current_notes = notes[i]
-#     current_strengths = strengths[i]
-#     for j in reversed(range(MAX_NOTES + 1)):
-#       if current_strengths[j] < cutoff: current_notes.pop(j)
+  for i in range(len(notes)):
+    current_notes = notes[i]
+    current_strengths = strengths[i]
+    for j in reversed(range(MAX_NOTES + 1)):
+      if current_strengths[j] < cutoff: current_notes.pop(j)
   
-#   return notes
+  return notes
 
-def get_top_notes(notes, strengths):
+def get_top_notes(notes):
   """
-  This method just returns the top max_notes
+  This method just returns the top note from max_notes so that we're left with the actual max notes
   """
-  new_notes = []
-  for note in notes:
-    new_notes.append(note[0:len(note) - 1]) # remove the last note
-  return new_notes
+  for note in notes: 
+    note.pop(MAX_NOTES)
 
 def printnotes(notes, strengths):
   for note in notes:
@@ -94,7 +93,8 @@ for i in range(FRAME_COUNT):
   all_notes.append(notes)
   all_strengths.append(strengths)
 
-get_top_notes(all_notes, all_strengths)
+if WITH_FREQ_CUTOFF: get_top_notes_using_frequency(all_notes, all_strengths)
+else: get_top_notes(all_notes)
 
 # Handles converting frequencies to notes in midi file
 from midiutil.MidiFile import MIDIFile
@@ -122,7 +122,8 @@ for notes in all_notes:
   # Increment all notes that are still playing
   for note in notes:
     if note in previous_notes: previous_notes[note] += 1 # For every first encounter with a new note, we have to add it into the dictionary
-    else: previous_notes[note] = 1
+    else: 
+      if note >= 0 and note <= 255: previous_notes[note] = 1 # 
   
   # Add in notes whose duration has ended
   for note in previous_notes:
@@ -130,5 +131,13 @@ for notes in all_notes:
       mf.addNote(track, channel, note, time - previous_notes[note], previous_notes[note], volume)
       previous_notes[note] = 0
 
-CONTEXT = "1FPS"
+# Add in last notes
+time += 1
+for note in previous_notes:
+  if previous_notes[note] != 0:
+    mf.addNote(track, channel, note, time - previous_notes[note], previous_notes[note], volume)
+
+CONTEXT = "FPS=" + str(FPS) + " Maxnotes=" + str(MAX_NOTES) + " Freq_cutoff=" + str(WITH_FREQ_CUTOFF)
 mf.writeFile(open("outputsongs/" + AUDIO_FILE + " " + CONTEXT + ".mid", 'wb'))
+
+
